@@ -26,7 +26,7 @@ private:
 
         // Coordenadas del goal (cambia según tu mapa)
         goal.pose.position.x = 8.31;
-        goal.pose.position.y = -0.52;
+        goal.pose.position.y = -0.53;
         goal.pose.position.z = 0.0;
 
         goal.pose.orientation.x = 0.0;
