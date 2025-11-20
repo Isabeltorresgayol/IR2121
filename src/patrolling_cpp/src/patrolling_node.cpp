@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
     goal.pose.position.z = 0.0;
     goal.pose.orientation.w = 1.0;
 
-    rclcpp::WallRate loop(1s);
+    rclcpp::WallRate loop(2s);
 
     while (rclcpp::ok())
     {
