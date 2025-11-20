@@ -25,7 +25,7 @@ private:
         goal.header.frame_id = "map";
 
         // Coordenadas del goal (cambia según tu mapa)
-        goal.pose.position.x = 8.31;
+        goal.pose.position.x = 8.32;
         goal.pose.position.y = -0.52;
         goal.pose.position.z = 0.0;
 
