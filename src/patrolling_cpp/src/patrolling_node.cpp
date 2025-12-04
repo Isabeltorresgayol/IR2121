@@ -19,7 +19,7 @@ constexpr double SPEED_THRESHOLD      = 0.05; // velocidad mínima para ajuste d
 double current_x = 0.0;
 double current_y = 0.0;
 
-// Función para calcular distancia
+
 double distance_to(double x1, double y1, double x2, double y2)
 {
     return std::hypot(x1 - x2, y1 - y2);
@@ -136,4 +136,5 @@ int main(int argc, char *argv[])
     rclcpp::shutdown();
     return 0;
 }
+
 
