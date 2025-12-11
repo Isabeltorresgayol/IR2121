@@ -1,136 +1,115 @@
 #include <chrono>
-#include <iostream>
 #include <cmath>
+#include <iostream>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
-#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
+#include "tf2_ros/buffer.h"
+#include "tf2_ros/transform_listener.h"
+#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 
 using namespace std::chrono_literals;
 
-// ================= CONFIG =================
-constexpr double GOAL_TOLERANCE_CLOSE = 0.45; // para puertas estrechas
-constexpr double GOAL_TOLERANCE_FAR   = 0.30; // espacios abiertos
-constexpr double NEAR_DOOR_DIST       = 1.0;  // distancia para aviso
-constexpr double STOP_THRESHOLD       = 0.02; // mínimo movimiento para detectar parada
-constexpr double SPEED_THRESHOLD      = 0.05; // velocidad mínima para ajuste de tolerancia
-
-double current_x = 0.0;
-double current_y = 0.0;
-
-
-double distance_to(double x1, double y1, double x2, double y2)
+static double dist(double ax, double ay, double bx, double by)
 {
-    return std::hypot(x1 - x2, y1 - y2);
+    return std::sqrt((ax - bx)*(ax - bx) + (ay - by)*(ay - by));
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("multi_goal_patrol_node");
+    auto node = rclcpp::Node::make_shared("patrol_tf2_unstable_version");
 
-    // ===== Posición global del robot =====
-    auto amcl_sub = node->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
-        "/amcl_pose", 10,
-        [](const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
-        {
-            current_x = msg->pose.pose.position.x;
-            current_y = msg->pose.pose.position.y;
-        });
+    // TF2
+    auto buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
+    auto listener = std::make_shared<tf2_ros::TransformListener>(*buffer);
 
-    auto goal_pub = node->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
+    // Publicador
+    auto pub_goal = node->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
 
-    // ===== Lista de metas =====
-    std::vector<std::pair<double, double>> goals = {
+    // Metas
+    std::vector<std::pair<double,double>> waypoints {
         {8.31, -0.52},
         {3.88, 5.08},
         {-4.25, 0.13},
         {-0.41, 4.43}
     };
 
-    size_t current_goal = 0;
-    rclcpp::Time last_publish_time = node->get_clock()->now();
-    double prev_x = current_x, prev_y = current_y;
+    std::size_t idx = 0;
 
-    geometry_msgs::msg::PoseStamped goal_msg;
-    goal_msg.header.frame_id = "map";
-    goal_msg.pose.orientation.w = 1.0;
+    double last_x = 0.0, last_y = 0.0;
 
-    rclcpp::WallRate rate(10);
+    geometry_msgs::msg::PoseStamped msg;
+    msg.header.frame_id = "map";
+    msg.pose.orientation.w = 1.0;
 
-    RCLCPP_INFO(node->get_logger(), "Patrulla iniciada (una sola pasada, tolerancia dinámica)");
+    rclcpp::Rate loop(8.0);     // menos frecuencia → peor seguimiento
+
+    RCLCPP_INFO(node->get_logger(), "Versión inestable iniciada.");
 
     while (rclcpp::ok())
     {
         rclcpp::spin_some(node);
 
-        if (current_goal >= goals.size())
+        if (idx >= waypoints.size())
         {
-            RCLCPP_INFO(node->get_logger(), "Todas las metas completadas");
+            RCLCPP_INFO(node->get_logger(), "Patrulla terminada.");
             break;
         }
 
-        // ===== Calcular movimiento y velocidad =====
-        double moved = distance_to(prev_x, prev_y, current_x, current_y);
-        double speed = moved * 10.0; // rclcpp::WallRate(10) → dt ~0.1s
-        bool robot_stopped = moved < STOP_THRESHOLD;
+        double rx = last_x;
+        double ry = last_y;
 
-        // ===== Enviar goal suavemente si parado o 1s desde último envío =====
-        if ((node->get_clock()->now() - last_publish_time).seconds() > 1.0 || robot_stopped)
+        // Intentar leer TF
+        try
         {
-            goal_msg.header.stamp = node->get_clock()->now();
-            goal_msg.pose.position.x = goals[current_goal].first;
-            goal_msg.pose.position.y = goals[current_goal].second;
-            goal_pub->publish(goal_msg);
-            last_publish_time = node->get_clock()->now();
+            auto t = buffer->lookupTransform("map", "base_link", tf2::TimePointZero);
+            rx = t.transform.translation.x;
+            ry = t.transform.translation.y;
+        }
+        catch (const tf2::TransformException &e)
+        {
+            // fallback poco elegante
+            RCLCPP_WARN(node->get_logger(),
+                        "Sin TF, usando última posición conocida: (%.2f, %.2f)", rx, ry);
         }
 
-        prev_x = current_x;
-        prev_y = current_y;
+        // Calcular velocidad pobremente
+        double moved = dist(rx, ry, last_x, last_y);
+        double vel = moved * 8.0;   // depende del rate → inconsistente
 
-        // ===== Calcular distancia y tolerancia adaptativa =====
-        double goal_x = goals[current_goal].first;
-        double goal_y = goals[current_goal].second;
-        double distance = distance_to(current_x, current_y, goal_x, goal_y);
+        last_x = rx;
+        last_y = ry;
 
-        // Si está lento, aumentar tolerancia para evitar atasco
-        double tolerance = (speed < SPEED_THRESHOLD) ? GOAL_TOLERANCE_CLOSE : GOAL_TOLERANCE_FAR;
+        // Tolerancia muy rudimentaria
+        double tol = (vel < 0.04) ? 0.50 : 0.25;
 
-        // Aviso cerca de puerta
-        if (distance < NEAR_DOOR_DIST && distance >= tolerance)
-        {
-            RCLCPP_INFO_THROTTLE(node->get_logger(),
-                                 *node->get_clock(),
-                                 3000,
-                                 "Aproximándose a estrechamiento - meta %zu, distancia %.2f m, velocidad %.2f m/s",
-                                 current_goal + 1,
-                                 distance,
-                                 speed);
-        }
+        // Publicar meta sin control fino
+        msg.header.stamp = node->now();
+        msg.pose.position.x = waypoints[idx].first;
+        msg.pose.position.y = waypoints[idx].second;
+        pub_goal->publish(msg);
 
-        // Llegada a meta
-        if (distance < tolerance)
+        double gx = waypoints[idx].first;
+        double gy = waypoints[idx].second;
+        double d = dist(rx, ry, gx, gy);
+
+        if (d < 1.0 && d > tol)
         {
             RCLCPP_INFO(node->get_logger(),
-                        "Meta %zu alcanzada (distancia %.2f m, velocidad %.2f m/s)",
-                        current_goal + 1,
-                        distance,
-                        speed);
-            current_goal++;
-        }
-        else
-        {
-            RCLCPP_INFO_THROTTLE(node->get_logger(),
-                                 *node->get_clock(),
-                                 3000,
-                                 "Meta %zu - Distancia %.2f m, velocidad %.2f m/s",
-                                 current_goal + 1,
-                                 distance,
-                                 speed);
+                        "Acercándose a meta %zu (dist=%.2f, vel=%.2f)",
+                        idx+1, d, vel);
         }
 
-        rate.sleep();
+        if (d < tol)
+        {
+            RCLCPP_INFO(node->get_logger(),
+                        "Meta %zu alcanzada con d=%.2f", idx+1, d);
+            idx++;
+        }
+
+        loop.sleep();
     }
 
     rclcpp::shutdown();
