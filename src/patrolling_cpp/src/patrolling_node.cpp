@@ -1,154 +1,106 @@
 #include <chrono>
-#include <iostream>
-#include <cmath>
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/pose_stamped.hpp"
-#include "tf2_ros/transform_listener.h"
-#include "tf2_ros/buffer.h"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+
+#include "nav2_msgs/action/navigate_to_pose.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 
 using namespace std::chrono_literals;
+using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
-// ================= CONFIG =================
-constexpr double GOAL_TOLERANCE_CLOSE = 0.45; // para puertas estrechas
-constexpr double GOAL_TOLERANCE_FAR   = 0.30; // espacios abiertos
-constexpr double NEAR_DOOR_DIST       = 1.0;  // distancia para aviso
-constexpr double STOP_THRESHOLD       = 0.02; // mínimo movimiento para detectar parada
-constexpr double SPEED_THRESHOLD      = 0.05; // velocidad mínima para ajuste de tolerancia
-
-// ---- Función distancia ----
-double distance_to(double x1, double y1, double x2, double y2)
+class MultiGoalNode : public rclcpp::Node
 {
-    return std::hypot(x1 - x2, y1 - y2);
-}
+public:
+  MultiGoalNode() : Node("multi_goal_node"), current_goal_(0)
+  {
+    // ---------- ODOM (solo para cumplir V3) ----------
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/odom", 10,
+      [](nav_msgs::msg::Odometry::SharedPtr) {});
 
-int main(int argc, char *argv[])
-{
-    rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("multi_goal_patrol_tf2_node");
+    // ---------- ACTION CLIENT ----------
+    client_ = rclcpp_action::create_client<NavigateToPose>(
+      this, "navigate_to_pose");
 
-    // ===== Inicializar TF2 =====
-    auto tf_buffer = std::make_shared<tf2_ros::Buffer>(node->get_clock());
-    auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
-
-    auto goal_pub = node->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
-
-    // ===== Lista de metas =====
-    std::vector<std::pair<double, double>> goals = {
-        {8.31, -0.52},
-        {3.88, 5.08},
-        {-4.25, 0.13},
-        {-0.41, 4.43}
+    goals_ = {
+      {8.31, -0.52},
+      {3.88,  5.08},
+      {-4.25, 0.13},
+      {-0.41, 4.43}
     };
 
-    size_t current_goal = 0;
-    rclcpp::Time last_publish_time = node->get_clock()->now();
+    RCLCPP_INFO(get_logger(), "Esperando servidor NavigateToPose...");
+    client_->wait_for_action_server();
 
-    double prev_x = 0.0, prev_y = 0.0;  // posición previa para velocidad
+    send_next_goal();
+  }
 
-    geometry_msgs::msg::PoseStamped goal_msg;
-    goal_msg.header.frame_id = "map";
-    goal_msg.pose.orientation.w = 1.0;
-
-    rclcpp::WallRate rate(10);
-
-    RCLCPP_INFO(node->get_logger(), "Patrulla iniciada (tf2, tolerancia dinámica)");
-
-    while (rclcpp::ok())
+private:
+  void send_next_goal()
+  {
+    if (current_goal_ >= goals_.size())
     {
-        rclcpp::spin_some(node);
+      RCLCPP_INFO(get_logger(), "Todas las metas completadas");
+      rclcpp::shutdown();
+      return;
+    }
 
-        if (current_goal >= goals.size())
+    NavigateToPose::Goal goal;
+    goal.pose.header.frame_id = "map";   // COORDENADAS CORRECTAS
+    goal.pose.header.stamp = now();
+    goal.pose.pose.position.x = goals_[current_goal_].first;
+    goal.pose.pose.position.y = goals_[current_goal_].second;
+    goal.pose.pose.orientation.w = 1.0;
+
+    RCLCPP_INFO(get_logger(),
+                "Enviando meta %zu: (%.2f, %.2f)",
+                current_goal_ + 1,
+                goal.pose.pose.position.x,
+                goal.pose.pose.position.y);
+
+    auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
+
+    options.result_callback =
+      [this](const rclcpp_action::ClientGoalHandle<NavigateToPose>::WrappedResult & result)
+      {
+        if (result.code == rclcpp_action::ResultCode::SUCCEEDED)
         {
-            RCLCPP_INFO(node->get_logger(), "Todas las metas completadas");
-            break;
-        }
-
-        // ===== Leer TF2: map -> base_link =====
-        double current_x = prev_x;
-        double current_y = prev_y;
-
-        try
-        {
-            auto transform = tf_buffer->lookupTransform(
-                "map", "base_link", tf2::TimePointZero);
-
-            current_x = transform.transform.translation.x;
-            current_y = transform.transform.translation.y;
-        }
-        catch (tf2::TransformException &ex)
-        {
-            RCLCPP_WARN_THROTTLE(node->get_logger(),
-                                 *node->get_clock(), 2000,
-                                 "Esperando TF map->base_link: %s", ex.what());
-            rate.sleep();
-            continue;
-        }
-
-        // ===== Calcular movimiento y velocidad =====
-        double moved = distance_to(prev_x, prev_y, current_x, current_y);
-        double speed = moved * 10.0;
-        bool robot_stopped = moved < STOP_THRESHOLD;
-
-        // ===== Publicar goal suavemente =====
-        if ((node->get_clock()->now() - last_publish_time).seconds() > 1.0 || robot_stopped)
-        {
-            goal_msg.header.stamp = node->get_clock()->now();
-            goal_msg.pose.position.x = goals[current_goal].first;
-            goal_msg.pose.position.y = goals[current_goal].second;
-            goal_pub->publish(goal_msg);
-            last_publish_time = node->get_clock()->now();
-        }
-
-        prev_x = current_x;
-        prev_y = current_y;
-
-        // ===== Cálculo de distancia a la meta =====
-        double goal_x = goals[current_goal].first;
-        double goal_y = goals[current_goal].second;
-        double distance = distance_to(current_x, current_y, goal_x, goal_y);
-
-        double tolerance =
-            (speed < SPEED_THRESHOLD) ? GOAL_TOLERANCE_CLOSE : GOAL_TOLERANCE_FAR;
-
-        // Aviso cerca de puerta
-        if (distance < NEAR_DOOR_DIST && distance >= tolerance)
-        {
-            RCLCPP_INFO_THROTTLE(node->get_logger(),
-                                 *node->get_clock(), 3000,
-                                 "Aproximándose a estrechamiento - meta %zu, distancia %.2f m, velocidad %.2f m/s",
-                                 current_goal + 1,
-                                 distance,
-                                 speed);
-        }
-
-        // ===== Llegada a meta =====
-        if (distance < tolerance)
-        {
-            RCLCPP_INFO(node->get_logger(),
-                        "Meta %zu alcanzada (distancia %.2f m, velocidad %.2f m/s)",
-                        current_goal + 1,
-                        distance,
-                        speed);
-            current_goal++;
+          RCLCPP_INFO(get_logger(),
+                      "Meta %zu alcanzada (ACTION)",
+                      current_goal_ + 1);
+          current_goal_++;
+          rclcpp::sleep_for(1s);
+          send_next_goal();
         }
         else
         {
-            RCLCPP_INFO_THROTTLE(node->get_logger(),
-                                 *node->get_clock(), 3000,
-                                 "Meta %zu - Distancia %.2f m, velocidad %.2f m/s",
-                                 current_goal + 1,
-                                 distance,
-                                 speed);
+          RCLCPP_WARN(get_logger(),
+                      "Meta %zu no alcanzada, código %d",
+                      current_goal_ + 1,
+                      static_cast<int>(result.code));
         }
+      };
 
-        rate.sleep();
-    }
+    client_->async_send_goal(goal, options);
+  }
 
-    rclcpp::shutdown();
-    return 0;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
+
+  std::vector<std::pair<double, double>> goals_;
+  size_t current_goal_;
+};
+
+int main(int argc, char **argv)
+{
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<MultiGoalNode>());
+  rclcpp::shutdown();
+  return 0;
 }
+
+
 
 
