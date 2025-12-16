@@ -1,65 +1,46 @@
-#include <chrono>
-#include <cmath>
-#include <vector>
-
 #include "rclcpp/rclcpp.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
-#include "tf2_ros/transform_listener.h"
-#include "tf2_ros/buffer.h"
-#include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
-#include "tf2/utils.h"
+#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
+#include <vector>
+#include <array>
+#include <cmath>
+#include <chrono>
 
 using namespace std::chrono_literals;
 
-// ================= PARÁMETROS =================
-constexpr double DIST_TOL_CLOSE = 0.45;
-constexpr double DIST_TOL_FAR   = 0.30;
-constexpr double YAW_TOL        = 0.30;   // tolerancia relajada
-constexpr double STOP_EPS       = 0.02;
-constexpr double SPEED_EPS      = 0.05;
+// Parámetros
+const double GOAL_TOLERANCE = 0.4;   // Tolerancia para considerar llegada
+const int NAV_START_DELAY = 2;        // s
 
-// ----------------- Utils -----------------
-double planarDistance(double x1, double y1, double x2, double y2)
+// Variables globales AMCL
+double amcl_x = 0.0;
+double amcl_y = 0.0;
+bool amcl_recibido = false;
+
+// Callback AMCL
+void amclCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
 {
-    return std::hypot(x1 - x2, y1 - y2);
+    amcl_x = msg->pose.pose.position.x;
+    amcl_y = msg->pose.pose.position.y;
+    amcl_recibido = true;
 }
-
-double yawError(double yaw1, double yaw2)
-{
-    double err = yaw1 - yaw2;
-    while (err > M_PI)  err -= 2.0 * M_PI;
-    while (err < -M_PI) err += 2.0 * M_PI;
-    return std::fabs(err);
-}
-
-double quatToYaw(const geometry_msgs::msg::Quaternion &q)
-{
-    tf2::Quaternion tf_q;
-    tf2::fromMsg(q, tf_q);
-    return tf2::getYaw(tf_q);
-}
-
-// ---------------- Waypoint ----------------
-struct Waypoint
-{
-    double x;
-    double y;
-    double yaw;
-};
 
 int main(int argc, char **argv)
 {
     rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("patrol_waypoints_tf2_yaw_v2");
+    auto node = rclcpp::Node::make_shared("goal_publisher_v4_amcl");
 
-    auto tf_buffer   = std::make_shared<tf2_ros::Buffer>(node->get_clock());
-    auto tf_listener = std::make_shared<tf2_ros::TransformListener>(*tf_buffer);
+    auto publisher = node->create_publisher<geometry_msgs::msg::PoseStamped>(
+        "/goal_pose", 10);
 
-    auto goal_pub =
-        node->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
+    auto amcl_sub = node->create_subscription<
+        geometry_msgs::msg::PoseWithCovarianceStamped>(
+        "/amcl_pose",
+        10,
+        amclCallback);
 
-    // ========= WAYPOINTS =========
-    std::vector<Waypoint> waypoints = {
+    // Waypoints (x, y, z)
+    std::vector<std::array<double, 3>> waypoints = {
         {-3.89,  7.86, -0.00143},
         { 3.42, 16.60, -0.00143},
         {-5.62, 24.30, -0.00143},
@@ -67,103 +48,84 @@ int main(int argc, char **argv)
         {-4.57,  0.921, -0.00137}
     };
 
-    size_t wp_index = 0;
-    rclcpp::Time last_goal_sent = node->get_clock()->now();
+    // Esperar arranque de Nav2 / AMCL
+    rclcpp::sleep_for(std::chrono::seconds(NAV_START_DELAY));
 
-    double last_x = 0.0;
-    double last_y = 0.0;
+    RCLCPP_INFO(node->get_logger(),
+                "Iniciando versión 4: detección de llegada basada en AMCL");
 
-    bool position_reached = false;
+    rclcpp::Rate rate(5);
 
-    geometry_msgs::msg::PoseStamped goal_msg;
-    goal_msg.header.frame_id = "map";
-
-    rclcpp::WallRate loop_rate(10);
-
-    RCLCPP_INFO(node->get_logger(), "Patrulla iniciada (2 fases: posición + yaw)");
-
-    while (rclcpp::ok() && wp_index < waypoints.size())
+    // --- BUCLE DE WAYPOINTS ---
+    for (size_t i = 0; i < waypoints.size() && rclcpp::ok(); i++)
     {
-        rclcpp::spin_some(node);
+        auto &wp = waypoints[i];
 
-        double rx, ry, ryaw;
+        // Crear objetivo
+        geometry_msgs::msg::PoseStamped goal;
+        goal.header.frame_id = "map";
+        goal.header.stamp = node->get_clock()->now();
 
-        try
+        goal.pose.position.x = wp[0];
+        goal.pose.position.y = wp[1];
+        goal.pose.position.z = wp[2];
+
+        // Orientación (yaw = 0 rad)
+        goal.pose.orientation.x = 0.0;
+        goal.pose.orientation.y = 0.0;
+        goal.pose.orientation.z = 0.0;
+        goal.pose.orientation.w = 1.0;
+
+        // Enviar objetivo
+        publisher->publish(goal);
+        RCLCPP_INFO(node->get_logger(),
+                    "Objetivo %zu enviado → (%.3f, %.3f, %.3f)",
+                    i + 1, wp[0], wp[1], wp[2]);
+
+        // --- Esperar llegada usando AMCL ---
+        amcl_recibido = false;
+
+        while (rclcpp::ok())
         {
-            auto tf = tf_buffer->lookupTransform(
-                "map", "base_link", tf2::TimePointZero);
+            rclcpp::spin_some(node);
 
-            rx   = tf.transform.translation.x;
-            ry   = tf.transform.translation.y;
-            ryaw = quatToYaw(tf.transform.rotation);
-        }
-        catch (tf2::TransformException &e)
-        {
-            RCLCPP_WARN_THROTTLE(
-                node->get_logger(), *node->get_clock(), 2000,
-                "Esperando TF map->base_link");
-            loop_rate.sleep();
-            continue;
-        }
+            if (!amcl_recibido)
+            {
+                RCLCPP_WARN_THROTTLE(
+                    node->get_logger(),
+                    *node->get_clock(),
+                    2000,
+                    "Esperando pose de AMCL...");
+                rate.sleep();
+                continue;
+            }
 
-        double delta_move = planarDistance(last_x, last_y, rx, ry);
-        double est_speed  = delta_move * 10.0;
-        bool stopped      = delta_move < STOP_EPS;
+            double dx = wp[0] - amcl_x;
+            double dy = wp[1] - amcl_y;
+            double distancia = std::hypot(dx, dy);
 
-        // ---- Publicar goal periódicamente ----
-        if ((node->get_clock()->now() - last_goal_sent).seconds() > 1.0 || stopped)
-        {
-            const auto &wp = waypoints[wp_index];
-
-            goal_msg.header.stamp = node->get_clock()->now();
-            goal_msg.pose.position.x = wp.x;
-            goal_msg.pose.position.y = wp.y;
-
-            tf2::Quaternion q;
-            q.setRPY(0.0, 0.0, wp.yaw);
-            goal_msg.pose.orientation = tf2::toMsg(q);
-
-            goal_pub->publish(goal_msg);
-            last_goal_sent = node->get_clock()->now();
-        }
-
-        last_x = rx;
-        last_y = ry;
-
-        const auto &wp = waypoints[wp_index];
-
-        double dist_err = planarDistance(rx, ry, wp.x, wp.y);
-        double yaw_err  = yawError(ryaw, wp.yaw);
-
-        double dist_tol =
-            (est_speed < SPEED_EPS) ? DIST_TOL_CLOSE : DIST_TOL_FAR;
-
-        // -------- FASE 1: posición --------
-        if (!position_reached && dist_err < dist_tol)
-        {
-            position_reached = true;
             RCLCPP_INFO(node->get_logger(),
-                        "WP %zu: posición alcanzada, ajustando orientación...",
-                        wp_index + 1);
+                        "Distancia AMCL al objetivo %zu: %.3f m",
+                        i + 1, distancia);
+
+            if (distancia < GOAL_TOLERANCE)
+            {
+                RCLCPP_INFO(node->get_logger(),
+                            "Llegada al objetivo %zu (basado en AMCL)",
+                            i + 1);
+                break;
+            }
+
+            rate.sleep();
         }
 
-        // -------- FASE 2: yaw --------
-        if (position_reached && yaw_err < YAW_TOL)
-        {
-            RCLCPP_INFO(node->get_logger(),
-                        "Waypoint %zu COMPLETADO (dist=%.2f, yaw=%.2f)",
-                        wp_index + 1, dist_err, yaw_err);
-
-            position_reached = false;
-            wp_index++;
-        }
-
-        loop_rate.sleep();
+        rclcpp::sleep_for(500ms);
     }
 
-    RCLCPP_INFO(node->get_logger(), "Ruta finalizada correctamente");
+    RCLCPP_INFO(node->get_logger(),
+                "Patrulla completada (versión 4).");
+
     rclcpp::shutdown();
     return 0;
 }
-
 
