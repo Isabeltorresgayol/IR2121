@@ -1,0 +1,10 @@
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/uninstall.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/patrolling_cpp_uninstall.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/patrolling_node.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/test.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/edit_cache.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/rebuild_cache.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/list_install_components.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/install.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/install/local.dir
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/CMakeFiles/install/strip.dir

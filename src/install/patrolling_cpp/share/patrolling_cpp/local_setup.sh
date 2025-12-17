@@ -1,0 +1,1 @@
+/home/usuario/Documentos/GitHub/IR2121/src/build/patrolling_cpp/ament_cmake_environment_hooks/local_setup.sh

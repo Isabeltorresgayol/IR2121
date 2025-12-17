@@ -25,10 +25,10 @@ public:
       this, "navigate_to_pose");
 
     goals_ = {
-     {-3.89,  7.86},
-     {-7.32, 7.58},
-     {-4.34, 7.22},
-     {-4.20, 3.26}
+        {-3.89,  7.86, -0.0},
+        {-7.32, 7.58, -0.0},
+        {-4.34, 7.22, -0.0},
+        {-4.20, 3.26, -0.0}
     };
 
     RCLCPP_INFO(get_logger(), "Esperando servidor NavigateToPose...");
