@@ -1,131 +1,102 @@
-#include "rclcpp/rclcpp.hpp"
-#include "geometry_msgs/msg/pose_stamped.hpp"
-#include "geometry_msgs/msg/pose_with_covariance_stamped.hpp"
-#include <vector>
-#include <array>
-#include <cmath>
 #include <chrono>
+#include <vector>
+
+#include "rclcpp/rclcpp.hpp"
+#include "rclcpp_action/rclcpp_action.hpp"
+
+#include "nav2_msgs/action/navigate_to_pose.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 
 using namespace std::chrono_literals;
+using NavigateToPose = nav2_msgs::action::NavigateToPose;
 
-// Parámetros
-const double GOAL_TOLERANCE = 0.4;   // Tolerancia para considerar llegada
-const int NAV_START_DELAY = 2;        // s
-
-// Variables globales AMCL
-double amcl_x = 0.0;
-double amcl_y = 0.0;
-bool amcl_recibido = false;
-
-// Callback AMCL
-void amclCallback(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr msg)
+class MultiGoalNode : public rclcpp::Node
 {
-    amcl_x = msg->pose.pose.position.x;
-    amcl_y = msg->pose.pose.position.y;
-    amcl_recibido = true;
-}
+public:
+  MultiGoalNode() : Node("multi_goal_node"), current_goal_(0)
+  {
+    // ---------- ODOM (solo para cumplir V3) ----------
+    odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      "/odom", 10,
+      [](nav_msgs::msg::Odometry::SharedPtr) {});
+
+    // ---------- ACTION CLIENT ----------
+    client_ = rclcpp_action::create_client<NavigateToPose>(
+      this, "navigate_to_pose");
+
+    goals_ = {
+     {-3.89,  7.86},
+     {-7.32, 7.58},
+     {-4.34, 7.22},
+     {-4.20, 3.26}
+    };
+
+    RCLCPP_INFO(get_logger(), "Esperando servidor NavigateToPose...");
+    client_->wait_for_action_server();
+
+    send_next_goal();
+  }
+
+private:
+  void send_next_goal()
+  {
+    if (current_goal_ >= goals_.size())
+    {
+      RCLCPP_INFO(get_logger(), "Todas las metas completadas");
+      rclcpp::shutdown();
+      return;
+    }
+
+    NavigateToPose::Goal goal;
+    goal.pose.header.frame_id = "map";   // COORDENADAS CORRECTAS
+    goal.pose.header.stamp = now();
+    goal.pose.pose.position.x = goals_[current_goal_].first;
+    goal.pose.pose.position.y = goals_[current_goal_].second;
+    goal.pose.pose.orientation.w = 1.0;
+
+    RCLCPP_INFO(get_logger(),
+                "Enviando meta %zu: (%.2f, %.2f)",
+                current_goal_ + 1,
+                goal.pose.pose.position.x,
+                goal.pose.pose.position.y);
+
+    auto options = rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
+
+    options.result_callback =
+      [this](const rclcpp_action::ClientGoalHandle<NavigateToPose>::WrappedResult & result)
+      {
+        if (result.code == rclcpp_action::ResultCode::SUCCEEDED)
+        {
+          RCLCPP_INFO(get_logger(),
+                      "Meta %zu alcanzada (ACTION)",
+                      current_goal_ + 1);
+          current_goal_++;
+          rclcpp::sleep_for(1s);
+          send_next_goal();
+        }
+        else
+        {
+          RCLCPP_WARN(get_logger(),
+                      "Meta %zu no alcanzada, código %d",
+                      current_goal_ + 1,
+                      static_cast<int>(result.code));
+        }
+      };
+
+    client_->async_send_goal(goal, options);
+  }
+
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp_action::Client<NavigateToPose>::SharedPtr client_;
+
+  std::vector<std::pair<double, double>> goals_;
+  size_t current_goal_;
+};
 
 int main(int argc, char **argv)
 {
-    rclcpp::init(argc, argv);
-    auto node = rclcpp::Node::make_shared("goal_publisher_v4_amcl");
-
-    auto publisher = node->create_publisher<geometry_msgs::msg::PoseStamped>(
-        "/goal_pose", 10);
-
-    auto amcl_sub = node->create_subscription<
-        geometry_msgs::msg::PoseWithCovarianceStamped>(
-        "/amcl_pose",
-        10,
-        amclCallback);
-
-    // Waypoints (x, y, z)
-    std::vector<std::array<double, 3>> waypoints = {
-        {-3.89,  7.86, -0.00143},
-        { 3.42, 16.60, -0.00143},
-        {-5.62, 24.30, -0.00143},
-        {-12.6, 16.10, -0.00143},
-        {-4.57,  0.921, -0.00137}
-    };
-
-    // Esperar arranque de Nav2 / AMCL
-    rclcpp::sleep_for(std::chrono::seconds(NAV_START_DELAY));
-
-    RCLCPP_INFO(node->get_logger(),
-                "Iniciando versión 4: detección de llegada basada en AMCL");
-
-    rclcpp::Rate rate(5);
-
-    // --- BUCLE DE WAYPOINTS ---
-    for (size_t i = 0; i < waypoints.size() && rclcpp::ok(); i++)
-    {
-        auto &wp = waypoints[i];
-
-        // Crear objetivo
-        geometry_msgs::msg::PoseStamped goal;
-        goal.header.frame_id = "map";
-        goal.header.stamp = node->get_clock()->now();
-
-        goal.pose.position.x = wp[0];
-        goal.pose.position.y = wp[1];
-        goal.pose.position.z = wp[2];
-
-        // Orientación (yaw = 0 rad)
-        goal.pose.orientation.x = 0.0;
-        goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = 0.0;
-        goal.pose.orientation.w = 1.0;
-
-        // Enviar objetivo
-        publisher->publish(goal);
-        RCLCPP_INFO(node->get_logger(),
-                    "Objetivo %zu enviado → (%.3f, %.3f, %.3f)",
-                    i + 1, wp[0], wp[1], wp[2]);
-
-        // --- Esperar llegada usando AMCL ---
-        amcl_recibido = false;
-
-        while (rclcpp::ok())
-        {
-            rclcpp::spin_some(node);
-
-            if (!amcl_recibido)
-            {
-                RCLCPP_WARN_THROTTLE(
-                    node->get_logger(),
-                    *node->get_clock(),
-                    2000,
-                    "Esperando pose de AMCL...");
-                rate.sleep();
-                continue;
-            }
-
-            double dx = wp[0] - amcl_x;
-            double dy = wp[1] - amcl_y;
-            double distancia = std::hypot(dx, dy);
-
-            RCLCPP_INFO(node->get_logger(),
-                        "Distancia AMCL al objetivo %zu: %.3f m",
-                        i + 1, distancia);
-
-            if (distancia < GOAL_TOLERANCE)
-            {
-                RCLCPP_INFO(node->get_logger(),
-                            "Llegada al objetivo %zu (basado en AMCL)",
-                            i + 1);
-                break;
-            }
-
-            rate.sleep();
-        }
-
-        rclcpp::sleep_for(500ms);
-    }
-
-    RCLCPP_INFO(node->get_logger(),
-                "Patrulla completada (versión 4).");
-
-    rclcpp::shutdown();
-    return 0;
+  rclcpp::init(argc, argv);
+  rclcpp::spin(std::make_shared<MultiGoalNode>());
+  rclcpp::shutdown();
+  return 0;
 }
-
