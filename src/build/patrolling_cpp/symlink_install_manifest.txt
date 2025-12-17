@@ -1,0 +1,16 @@
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/lib/patrolling_cpp/patrolling_node
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/ament_index/resource_index/package_run_dependencies/patrolling_cpp
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/ament_index/resource_index/parent_prefix_path/patrolling_cpp
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/environment/ament_prefix_path.sh
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/environment/ament_prefix_path.dsv
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/environment/path.sh
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/environment/path.dsv
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/local_setup.bash
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/local_setup.sh
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/local_setup.zsh
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/local_setup.dsv
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/package.dsv
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/ament_index/resource_index/packages/patrolling_cpp
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/cmake/patrolling_cppConfig.cmake
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/cmake/patrolling_cppConfig-version.cmake
+/home/usuario/Documentos/GitHub/IR2121/src/install/patrolling_cpp/share/patrolling_cpp/package.xml

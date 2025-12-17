@@ -1,0 +1,4 @@
+source;share/patrolling_cpp/local_setup.bash
+source;share/patrolling_cpp/local_setup.dsv
+source;share/patrolling_cpp/local_setup.sh
+source;share/patrolling_cpp/local_setup.zsh
