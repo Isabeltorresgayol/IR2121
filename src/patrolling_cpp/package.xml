@@ -1,5 +1,7 @@
 <?xml version="1.0"?>
-<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd"
+             schematypens="http://www.w3.org/2001/XMLSchema"?>
+
 <package format="3">
   <name>patrolling_cpp</name>
   <version>0.0.0</version>
@@ -11,15 +13,20 @@
   <!-- Build tool -->
   <buildtool_depend>ament_cmake</buildtool_depend>
 
-  <!-- Runtime + build dependencies -->
+  <!-- ================= DEPENDENCIAS ================= -->
   <build_depend>rclcpp</build_depend>
+  <build_depend>rclcpp_action</build_depend>     <!-- NUEVO -->
   <build_depend>geometry_msgs</build_depend>
   <build_depend>nav_msgs</build_depend>
+  <build_depend>nav2_msgs</build_depend>          <!-- NUEVO -->
 
   <exec_depend>rclcpp</exec_depend>
+  <exec_depend>rclcpp_action</exec_depend>        <!-- NUEVO -->
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>             <!-- NUEVO -->
 
+  <!-- Test -->
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 
